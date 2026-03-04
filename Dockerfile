@@ -51,6 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libauthen-pam-perl \
     libio-pty-perl \
     libjson-perl \
+    libxml-writer-perl \
     # Ruby for WPScan
     ruby \
     ruby-dev \

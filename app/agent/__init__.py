@@ -20,10 +20,10 @@ agent = create_agent(
     model=llm,
     tools=TOOLS,
     middleware=[  # type: ignore
+        TodoListMiddleware(),
         log_agent_thinking,           # Log thought process
         log_tool_execution,           # Log tool calls
         rotate_models_on_rate_limit,  # Rotate models on rate limits
-        TodoListMiddleware(),
     ],
     checkpointer=checkpointer,
     system_prompt=SYSTEM_PROMPT,
@@ -130,15 +130,27 @@ def stream_agent(message: str, thread_id: str):
                         
                         # Tool calls
                         if hasattr(msg, "type") and msg.type == "tool":
+                            tool_name = msg.name if hasattr(msg, "name") else "unknown"
                             output_str = str(msg.content) if hasattr(msg, "content") and msg.content else ""
+                            
                             yield {
                                 "type": "tool_call",
                                 "data": {
-                                    "tool": msg.name if hasattr(msg, "name") else "unknown",
+                                    "tool": tool_name,
                                     "status": "completed",
                                     "output": output_str[:500]  # Truncate for streaming
                                 }
                             }
+                            
+                            # Special handling for write_todos tool to show planning updates
+                            if tool_name == "write_todos":
+                                yield {
+                                    "type": "todo_update",
+                                    "data": {
+                                        "message": "Task plan updated",
+                                        "todos": output_str
+                                    }
+                                }
                         # AI responses
                         elif hasattr(msg, "type") and msg.type == "ai":
                             if hasattr(msg, "content") and msg.content:

@@ -34,8 +34,14 @@ def log_agent_thinking(state: AgentState, runtime: Runtime) -> dict[str, Any] | 
                 for tool_call in last_message.tool_calls:
                     tool_name = tool_call.get("name", "unknown")
                     tool_args = tool_call.get("args", {})
-                    logger.info(f"🔧 Tool Invoked: {tool_name}")
-                    logger.info(f"   Arguments: {tool_args}")
+                    
+                    # Special highlight for todo list planning
+                    if tool_name == "write_todos":
+                        logger.info(f"📝 Planning: Agent is creating/updating task list")
+                        logger.info(f"   Tasks: {tool_args}")
+                    else:
+                        logger.info(f"🔧 Tool Invoked: {tool_name}")
+                        logger.info(f"   Arguments: {tool_args}")
     
     return None
 
