@@ -7,6 +7,12 @@ from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import ToolMessage, AIMessage
 from langgraph.runtime import Runtime
 from agent.llm import FALLBACK_MODELS
+from utils.cache import (
+    generate_cache_key,
+    get_from_cache,
+    set_in_cache,
+    is_cache_available
+)
 
 # Set up logging
 logging.basicConfig(
@@ -14,6 +20,99 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger("PentestAgent")
+
+
+# Caching Middleware
+@wrap_model_call
+def cache_model_calls(
+    request: ModelRequest,
+    handler: Callable[[ModelRequest], ModelResponse]
+) -> ModelResponse:
+    """Cache model calls to reduce redundant API requests."""
+    if not is_cache_available():
+        return handler(request)
+    
+    try:
+        # Create cache key from model name and messages
+        messages_data = [
+            {"role": msg.type if hasattr(msg, "type") else "unknown", 
+             "content": msg.content if hasattr(msg, "content") else str(msg)}
+            for msg in request.state.get("messages", [])[-3:]  # Last 3 messages for context
+        ]
+        
+        model_name = getattr(request.model, "model_name", str(request.model))
+        
+        cache_data = {
+            "model": model_name,
+            "messages": messages_data,
+            "system_prompt": getattr(request, "system_prompt", None),
+        }
+        
+        cache_key = generate_cache_key("model_call", cache_data)
+        
+        # Try to get from cache
+        cached_response = get_from_cache(cache_key)
+        if cached_response:
+            logger.info(f"💾 Cache hit for model call")
+        
+        # Execute the handler
+        response = handler(request)
+        
+        # Cache the response metadata
+        set_in_cache(cache_key, {"cached": True, "timestamp": datetime.now().isoformat()}, ttl=1800)
+        
+        return response
+        
+    except Exception as e:
+        logger.debug(f"Model cache error: {e}")
+        return handler(request)
+
+
+@wrap_tool_call  # type: ignore
+def cache_tool_calls(
+    request: Any,
+    handler: Callable[[Any], ToolMessage]
+) -> ToolMessage:
+    """Cache tool call results to avoid redundant executions."""
+    if not is_cache_available():
+        return handler(request)
+    
+    try:
+        tool_name = request.tool_call.get("name", "") if hasattr(request, "tool_call") else ""
+        tool_args = request.tool_call.get("args", {}) if hasattr(request, "tool_call") else {}
+        
+        # Only cache deterministic tools (not time-sensitive scans)
+        cacheable_tools = {"send_http_request"}
+        
+        if tool_name not in cacheable_tools:
+            return handler(request)
+        
+        # Generate cache key
+        cache_key = generate_cache_key("tool_call", {
+            "tool": tool_name,
+            "args": tool_args
+        })
+        
+        # Try to get from cache
+        cached_result = get_from_cache(cache_key)
+        if cached_result:
+            logger.info(f"💾 Cache hit for tool: {tool_name}")
+        
+        # Execute the tool
+        result = handler(request)
+        
+        # Cache the result
+        if hasattr(result, "content"):
+            set_in_cache(cache_key, {
+                "content": str(result.content)[:1000],
+                "timestamp": datetime.now().isoformat()
+            }, ttl=600)
+        
+        return result
+        
+    except Exception as e:
+        logger.debug(f"Tool cache error: {e}")
+        return handler(request)
 
 
 # Logging Middleware
@@ -84,49 +183,81 @@ def rotate_models_on_rate_limit(
     request: ModelRequest,
     handler: Callable[[ModelRequest], ModelResponse]
 ) -> ModelResponse:
-    """Try each model in sequence if any error occurs."""
+    """Try each model in sequence if any error occurs, with retries for function call errors."""
     last_error = None
     
     for attempt, model in enumerate(FALLBACK_MODELS):
-        try:
-            logger.info(f"🎯 Using model: {model.model_name}")
-            
-            # Override the model in the request
-            modified_request = request.override(model=model)
-            
-            # Execute the model call
-            response = handler(modified_request)
-            
-            return response
-            
-        except Exception as e:
-            error_str = str(e).lower()
-            last_error = e
-            
-            # Determine error type for logging
-            if "rate limit" in error_str or "429" in error_str or "quota" in error_str:
-                error_type = "Rate limit"
-            elif "timeout" in error_str:
-                error_type = "Timeout"
-            elif "connection" in error_str or "network" in error_str:
-                error_type = "Connection"
-            else:
-                error_type = "Error"
-            
-            # Log and rotate to next model if available
-            if attempt < len(FALLBACK_MODELS) - 1:
-                logger.warning(
-                    f"⚠️  {error_type} on {model.model_name}: {str(e)[:100]}. "
-                    f"Rotating to next model..."
+        # Retry logic for function calling errors
+        max_retries = 2  # Retry up to 2 times per model for function errors
+        
+        for retry in range(max_retries + 1):
+            try:
+                if retry == 0:
+                    logger.info(f"🎯 Using model: {model.model_name}")
+                else:
+                    logger.info(f"🔄 Retry {retry}/{max_retries} for {model.model_name}")
+                
+                # Override the model in the request
+                modified_request = request.override(model=model)
+                
+                # Execute the model call
+                response = handler(modified_request)
+                
+                return response
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                error_repr = repr(e)
+                last_error = e
+                
+                # Check if this is a function calling error that should be retried
+                is_function_error = (
+                    "failed to call a function" in error_str or
+                    "adjust your prompt" in error_str or
+                    "function call" in error_str or
+                    ("error" in error_repr and "message" in error_repr and "function" in error_str)
                 )
-            else:
-                # If we've tried all models, raise error
-                logger.error(
-                    f"❌ All models exhausted. Last error: {error_type} - {str(e)[:100]}"
-                )
-                raise Exception(
-                    f"All available models failed. Last error: {str(e)}"
-                ) from last_error
+                
+                # Determine error type for logging
+                if "rate limit" in error_str or "429" in error_str or "quota" in error_str:
+                    error_type = "Rate limit"
+                    should_retry = False
+                elif "timeout" in error_str:
+                    error_type = "Timeout"
+                    should_retry = False
+                elif "connection" in error_str or "network" in error_str:
+                    error_type = "Connection"
+                    should_retry = False
+                elif is_function_error:
+                    error_type = "Function call error"
+                    should_retry = True
+                else:
+                    error_type = "Error"
+                    should_retry = False
+                
+                # Retry with same model if it's a function error
+                if should_retry and retry < max_retries:
+                    logger.warning(
+                        f"⚠️  {error_type} on {model.model_name}: {str(e)[:100]}. "
+                        f"Retrying..."
+                    )
+                    continue  # Retry with same model
+                
+                # Otherwise, move to next model or raise
+                if attempt < len(FALLBACK_MODELS) - 1:
+                    logger.warning(
+                        f"⚠️  {error_type} on {model.model_name}: {str(e)[:100]}. "
+                        f"Rotating to next model..."
+                    )
+                    break  # Break retry loop, go to next model
+                else:
+                    # If we've tried all models, raise error
+                    logger.error(
+                        f"❌ All models exhausted. Last error: {error_type} - {str(e)[:100]}"
+                    )
+                    raise Exception(
+                        f"All available models failed. Last error: {str(e)}"
+                    ) from last_error
     
     # Should never reach here, but just in case
     if last_error:

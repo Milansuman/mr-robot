@@ -8,7 +8,9 @@ from agent.prompts import SYSTEM_PROMPT
 from agent.middleware import (
     log_agent_thinking,
     log_tool_execution,
-    rotate_models_on_rate_limit
+    rotate_models_on_rate_limit,
+    cache_model_calls,
+    cache_tool_calls,
 )
 from langchain_core.runnables import RunnableConfig
 
@@ -21,6 +23,8 @@ agent = create_agent(
     tools=TOOLS,
     middleware=[  # type: ignore
         TodoListMiddleware(),
+        cache_model_calls,            # Cache model responses
+        cache_tool_calls,             # Cache tool results
         log_agent_thinking,           # Log thought process
         log_tool_execution,           # Log tool calls
         rotate_models_on_rate_limit,  # Rotate models on rate limits

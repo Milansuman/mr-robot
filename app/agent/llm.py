@@ -20,13 +20,13 @@ FALLBACK_MODELS = [
     ),
     ChatGroq(
         api_key=SecretStr(env.GROQ_API_KEY),
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        model="openai/gpt-oss-20b",
         temperature=0.1,
         max_retries=2
     ),
     ChatGroq(
         api_key=SecretStr(env.GROQ_API_KEY),
-        model="llama-3.3-70b-versatile",
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
         temperature=0.1,
         max_retries=2
     ),

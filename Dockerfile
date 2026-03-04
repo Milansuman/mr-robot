@@ -24,6 +24,7 @@ RUN uv pip install --system --no-cache \
     langchain-groq>=1.1.2 \
     pydantic-settings>=2.13.1 \
     requests>=2.32.5 \
+    redis>=5.0.0 \
     langgraph \
     uvicorn[standard]
 
