@@ -54,12 +54,14 @@ def cache_model_calls(
         cached_response = get_from_cache(cache_key)
         if cached_response:
             logger.info(f"💾 Cache hit for model call")
+            # Return cached response directly
+            return cached_response
         
         # Execute the handler
         response = handler(request)
         
-        # Cache the response metadata
-        set_in_cache(cache_key, {"cached": True, "timestamp": datetime.now().isoformat()}, ttl=1800)
+        # Cache the full response object
+        set_in_cache(cache_key, response, ttl=1800)
         
         return response
         
@@ -97,16 +99,16 @@ def cache_tool_calls(
         cached_result = get_from_cache(cache_key)
         if cached_result:
             logger.info(f"💾 Cache hit for tool: {tool_name}")
+            # Return cached result directly
+            return cached_result
         
         # Execute the tool
         result = handler(request)
         
-        # Cache the result
+        # Cache the full result object
         if hasattr(result, "content"):
-            set_in_cache(cache_key, {
-                "content": str(result.content)[:1000],
-                "timestamp": datetime.now().isoformat()
-            }, ttl=600)
+            logger.info(f"💾 Caching result for tool: {tool_name}")
+            set_in_cache(cache_key, result, ttl=600)
         
         return result
         
