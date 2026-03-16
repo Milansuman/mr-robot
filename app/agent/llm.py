@@ -4,7 +4,7 @@ from pydantic import SecretStr
 
 # Primary model
 llm = ChatGroq(
-    api_key=SecretStr(env.GROQ_API_KEY),
+    api_key=SecretStr(env.GROQ_API_KEYS_LIST[0]),
     model="moonshotai/kimi-k2-instruct-0905",
     temperature=0.1,
     max_retries=2
@@ -12,22 +12,7 @@ llm = ChatGroq(
 
 # Fallback models for rate limit rotation
 FALLBACK_MODELS = [
-    ChatGroq(
-        api_key=SecretStr(env.GROQ_API_KEY),
-        model="openai/gpt-oss-120b",
-        temperature=0.1,
-        max_retries=2
-    ),
-    ChatGroq(
-        api_key=SecretStr(env.GROQ_API_KEY),
-        model="openai/gpt-oss-20b",
-        temperature=0.1,
-        max_retries=2
-    ),
-    ChatGroq(
-        api_key=SecretStr(env.GROQ_API_KEY),
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        temperature=0.1,
-        max_retries=2
-    ),
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
 ]

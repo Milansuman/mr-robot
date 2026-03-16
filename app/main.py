@@ -46,7 +46,7 @@ async def scan(request: ScanRequest):
         scan_instruction = get_scan_instruction(request.target, request.scan_type)
         
         # Invoke the agent
-        result = invoke_agent(scan_instruction, request.thread_id)
+        result = await invoke_agent(scan_instruction, request.thread_id)
         
         # Extract the response
         response_text = result.get("response", "")
@@ -120,7 +120,7 @@ async def scan_stream(request: ScanRequest):
             scan_instruction = get_scan_instruction(request.target, request.scan_type)
             
             # Stream agent execution
-            for event in stream_agent(scan_instruction, request.thread_id):
+            async for event in stream_agent(scan_instruction, request.thread_id):
                 # Format as SSE
                 event_data = json.dumps(event)
                 yield f"data: {event_data}\n\n"
