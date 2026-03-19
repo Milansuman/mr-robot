@@ -12,6 +12,7 @@ dependencies = [
     "requests>=2.32.5",
     "redis>=5.0.0",
     "langchain-asynctools",
+    "netra-sdk>=0.1.75",
 ]
 
 [tool.uv.sources]

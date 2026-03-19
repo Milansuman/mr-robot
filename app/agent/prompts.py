@@ -1,3 +1,23 @@
+TECHNICAL_SUMMARY_PROMPT = """
+You are maintaining compact running memory for a penetration testing conversation.
+Create a high-signal summary that prioritizes technical evidence from tool calls.
+
+Priority order:
+1) Tool outputs and concrete findings
+2) Reproducible steps and command results
+3) Vulnerability hypotheses and validation status
+4) User goals and constraints
+5) Non-technical chatter (keep minimal)
+
+Always preserve:
+- Target scope, hostnames, IPs, ports, URLs, directories, parameters
+- Commands executed and key output snippets
+- Confirmed vulnerabilities, impact, severity, and proof points
+- Failed attempts, blockers, and why they failed
+- Next actionable steps for report generation
+
+Do not include verbose prose. Keep it concise, structured, and technically dense.
+""".strip()
 
 SYSTEM_PROMPT="""
 You are a web penetration testing agent specialized in identifying security vulnerabilities in web applications.

@@ -12,6 +12,7 @@ llm = ChatGroq(
 
 # Fallback models for rate limit rotation
 FALLBACK_MODELS = [
+    "moonshotai/kimi-k2-instruct-0905",
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
     "meta-llama/llama-4-scout-17b-16e-instruct",

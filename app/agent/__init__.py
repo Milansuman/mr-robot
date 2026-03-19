@@ -1,10 +1,11 @@
 from typing import Dict, Any, List, AsyncIterator
 from langchain.agents import create_agent
-from langchain.agents.middleware import TodoListMiddleware
+from langchain.agents.middleware import TodoListMiddleware, SummarizationMiddleware
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from agent.llm import llm
 from agent.tools import TOOLS
-from agent.prompts import SYSTEM_PROMPT
+from agent.prompts import SYSTEM_PROMPT, TECHNICAL_SUMMARY_PROMPT
 from agent.middleware import (
     CacheMiddleware,
     LoggingMiddleware,
@@ -13,8 +14,10 @@ from agent.middleware import (
 from langchain_core.runnables import RunnableConfig
 from langchain_asynctools import AsyncTools
 
-# Set up memory checkpointer for conversation persistence
-checkpointer = MemorySaver()
+# Set up memory checkpointer for conversation persistence.
+# pickle_fallback avoids intermittent failures when runtime objects (e.g. Send)
+# are not directly msgpack-serializable.
+checkpointer = MemorySaver(serde=JsonPlusSerializer(pickle_fallback=True))
 
 # Create the penetration testing agent with all middleware
 agent = create_agent(
@@ -22,6 +25,11 @@ agent = create_agent(
     tools=TOOLS,
     middleware=[  # type: ignore
         AsyncTools(),
+        SummarizationMiddleware(
+            model=llm,
+            trigger=[("tokens", 9800), ("messages", 80)],
+            summary_prompt=TECHNICAL_SUMMARY_PROMPT
+        ),
         TodoListMiddleware(),
         # CacheMiddleware(),
         LoggingMiddleware(),

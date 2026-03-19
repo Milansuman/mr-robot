@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Callable, Any, Awaitable
 from datetime import datetime
 from langchain.agents import AgentState
@@ -28,6 +29,39 @@ logger = logging.getLogger("PentestAgent")
 
 class CacheMiddleware(AgentMiddleware):
     """Caches model calls and deterministic tool calls to reduce redundant API requests."""
+
+    @staticmethod
+    def _tool_content_to_text(content: Any) -> str:
+        """Normalize ToolMessage content into plain text for stable caching."""
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(str(item) for item in content)
+        return str(content)
+
+    @staticmethod
+    def _is_async_placeholder(content_text: str) -> bool:
+        """Detect async placeholder responses returned before a tool has completed."""
+        return bool(
+            re.search(
+                r"tool call is being processed with job id:",
+                content_text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _build_tool_message_from_cache(cached: Any, tool_call_id: str) -> ToolMessage | None:
+        """Rebuild a ToolMessage from cached payload."""
+        if isinstance(cached, dict):
+            content = cached.get("content")
+            if content is not None:
+                return ToolMessage(content=str(content), tool_call_id=tool_call_id)
+        elif isinstance(cached, str):
+            return ToolMessage(content=cached, tool_call_id=tool_call_id)
+        return None
 
     async def awrap_model_call(
         self,
@@ -83,16 +117,33 @@ class CacheMiddleware(AgentMiddleware):
             if tool_name not in cacheable_tools:
                 return await handler(request)
 
+            tool_call_id = (
+                request.tool_call.get("id", "cached_tool_call")
+                if hasattr(request, "tool_call") else "cached_tool_call"
+            )
             cache_key = generate_cache_key("tool_call", {"tool": tool_name, "args": tool_args})
             cached_result = get_from_cache(cache_key)
             if cached_result:
                 logger.info(f"💾 Cache hit for tool: {tool_name}")
-                return cached_result
+                cached_tool_message = self._build_tool_message_from_cache(cached_result, tool_call_id)
+                if cached_tool_message is not None:
+                    return cached_tool_message
 
             result = await handler(request)
-            if hasattr(result, "content"):
+            if isinstance(result, ToolMessage):
+                content_text = self._tool_content_to_text(result.content)
+
+                # Skip async placeholder responses; cache only the real completed output.
+                if self._is_async_placeholder(content_text):
+                    logger.info(f"⏭️  Skipping placeholder cache for tool: {tool_name}")
+                    return result
+
                 logger.info(f"💾 Caching result for tool: {tool_name}")
-                set_in_cache(cache_key, result, ttl=600)
+                set_in_cache(
+                    cache_key,
+                    {"tool": tool_name, "content": content_text},
+                    ttl=600,
+                )
             return result
 
         except Exception as e:
@@ -153,7 +204,7 @@ class LoggingMiddleware(AgentMiddleware):
 
 
 class ModelRotationMiddleware(AgentMiddleware):
-    """Rotates through fallback models on errors, with retries for function call errors."""
+    """Rotates through fallback models and API keys on errors."""
 
     async def awrap_model_call(
         self,
@@ -170,10 +221,10 @@ class ModelRotationMiddleware(AgentMiddleware):
                     api_key=SecretStr(api_key),
                     model=model_name,
                     temperature=0.1,
-                    max_retries=2,
+                    max_retries=1,
                 )
 
-                max_retries = 2
+                max_retries = 1
 
                 for retry in range(max_retries + 1):
                     try:
@@ -214,7 +265,7 @@ class ModelRotationMiddleware(AgentMiddleware):
                         elif "connection" in error_str or "network" in error_str:
                             error_type, should_retry = "Connection", False
                         elif is_function_error:
-                            error_type, should_retry = "Function call error", True
+                            error_type, should_retry = "Function call error", False
                         else:
                             error_type, should_retry = "Error", False
 
